@@ -1,19 +1,20 @@
-#define DB_SIZE 3
-#define CH_SIZE 3
+#define DATABASE_SIZE 3
+#define CHANNEL_SIZE 3
+#define MAX_ELAPSED_TIME 5
+#define POSSIBLE_ANOMALIES 5
 
-#define N_ERRORS 5
-#define N_CUSTOMERS 2
-#define N_PRODUCERS 2
-#define N_SHIPPERS 2
-#define THETA 5
-int time = 0;
+#define CUSTOMER_NUMBER 2
+#define PRODUCER_NUMBER 2
+#define SHIPPER_NUMBER 2
 
+//Structure to represent the actors. Type 0 for Customers, 1 for Producers, 2 for Shippers
 typedef Actor {
 	int id;
-	int type;		// 0 per Customer, 1 per Producer, 2 per Shipper
+	int type;
 	int descr;
 }
 
+//Structure to represent the items
 typedef Item {
 	int id;
 	byte descr;
@@ -23,6 +24,7 @@ typedef Item {
 	bit producing;
 }
 
+//Structure to represent the orders
 typedef Order {
 	int id;
 	int customer_id;
@@ -35,26 +37,36 @@ typedef Order {
 	int date_arrived;
 }
 
-Actor actors[DB_SIZE];
-Item items[DB_SIZE];
-Order orders[DB_SIZE];
-int anomalies[N_ERRORS];				// Array per registrare errori da IntMonitor
+Actor actors[DATABASE_SIZE];
+Item items[DATABASE_SIZE];
+Order orders[DATABASE_SIZE];
 
-// Canali di comunicazione
-chan CO = [CH_SIZE] of { bit, int, int, int };						// type, customer id, item id, quantity
-chan CI[N_CUSTOMERS] = [CH_SIZE] of { bit, int, int, int };						// type, elem_id (or order_id), descr, order id
-chan PO = [CH_SIZE] of { int, int, int, int };						// type, producer id, item id, quantity
-chan PI[N_PRODUCERS] = [CH_SIZE] of { bit, int, int };						// type, item id, quantity
-chan SO = [CH_SIZE] of { bit, int, int };						// type, actor id, order id
-chan SI[N_SHIPPERS] = [CH_SIZE] of { int, int, int };						// order id, item id, quantity
+int anomalies[POSSIBLE_ANOMALIES];
+int time = 0;
+
+//Channel in common where clients ask. Params: type, customer id, item id, quantity
+chan CO = [CHANNEL_SIZE] of { bit, int, int, int };
+
+//Dedicated channel where clients receive the response. Params: type, element id, description, how many
+chan CI[CUSTOMER_NUMBER] = [CHANNEL_SIZE] of { bit, int, int, int };
+
+//Channel in common where producers answer. Params: type, item id, quantity
+chan PO = [CHANNEL_SIZE] of { int, int, int, int };
+
+//Dedicated channel where producers receive the response. Params: type, producer id, item id, quantity
+chan PI[PRODUCER_NUMBER] = [CHANNEL_SIZE] of { bit, int, int };
+
+//Channel in common where shippers answer. Params: shipper id, order id, item id
+chan SO = [CHANNEL_SIZE] of { bit, int, int };
+
+//Dedicated channel where shippers receive the response. Params: order id, item id, quantity
+chan SI[SHIPPER_NUMBER] = [CHANNEL_SIZE] of { int, int, int };
 
 
 //Utility per generare numeri casuali
 chan randomChan = [0] of { bit };
-
 bit fd = 0;
 bit fa = 0;
-
 proctype RandomGenerator() {
     do
     :: randomChan!0
@@ -62,7 +74,7 @@ proctype RandomGenerator() {
     od;
 }
 
-// Algorithm 1: Environment
+// Algorithm 1: Environment Setup
 proctype EnvGen(byte p) {
     int n = 0;
     bit stop;
@@ -72,7 +84,7 @@ proctype EnvGen(byte p) {
     do
     :: (p == 0 && n > 0) -> // Caso: un cliente termina
         n--;
-    :: (n >= 1 && n < DB_SIZE) ->
+    :: (n >= 1 && n < DATABASE_SIZE) ->
         randomChan?rand_val;
         if
         :: (rand_val > fd) -> // Rimozione casuale
@@ -86,13 +98,13 @@ proctype EnvGen(byte p) {
             :: else -> break;
             od;
         fi;
-    :: (n < 1 || (n < DB_SIZE)) ->
+    :: (n < 1 || (n < DATABASE_SIZE)) ->
         randomChan?rand_val;
         if
         :: (rand_val > fa) -> // Creazione nuovo processo
             stop = 0;
             do
-            :: (stop == 0 && n < DB_SIZE) ->
+            :: (stop == 0 && n < DATABASE_SIZE) ->
                 new_pid = n;
                 actors[new_pid].id = new_pid;
                 actors[new_pid].type = p;
@@ -147,7 +159,7 @@ proctype CollectFromCustomer() {
         :: (type == 0) -> {
             i = 0;
             do
-            :: (i < DB_SIZE) -> {
+            :: (i < DATABASE_SIZE) -> {
                 if
                 :: (actors[i].id == 0) -> {
                     CI[customer_id]!0, items[i].id, items[i].descr, items[i].how_many;
@@ -162,7 +174,7 @@ proctype CollectFromCustomer() {
         }
         :: (type == 1) -> {
             if
-            :: (order_id < DB_SIZE) -> {
+            :: (order_id < DATABASE_SIZE) -> {
                 time++;
                 orders[order_id].customer_id = customer_id;
                 orders[order_id].item_id = item_id;
@@ -186,7 +198,7 @@ proctype ManageOrders() {
     :: true ->
         i = 0;
         do
-        :: (i < DB_SIZE) ->
+        :: (i < DATABASE_SIZE) ->
             if
             :: (orders[i].date_processed == 0 || orders[i].date_ready == 0) ->
                 item_id = orders[i].item_id;
@@ -207,7 +219,7 @@ proctype ManageOrders() {
                 :: else ->
                     // Disponibilità insufficiente: richiede produzione
                     needed_qty = how_many - stock;
-                    producer_id = item_id % N_PRODUCERS;
+                    producer_id = item_id % PRODUCER_NUMBER;
                     if
                     :: (needed_qty > 0) -> PI[producer_id]!1, item_id, needed_qty;
                     fi;
@@ -230,12 +242,12 @@ proctype SendProd() {
     :: true ->
         i = 0;
         do
-        :: (i < DB_SIZE) ->
+        :: (i < DATABASE_SIZE) ->
             if
             :: (!items[i].producing && items[i].how_many < items[i].how_many_min) ->
                 item_id = items[i].id;
                 qty_to_produce = items[i].how_many_min - items[i].how_many;
-                producer_id = items[i].producer_id % N_PRODUCERS;
+                producer_id = items[i].producer_id % PRODUCER_NUMBER;
 
                 // Segna l'oggetto come in produzione e invia la richiesta al produttore
                 items[i].producing = 1;
@@ -255,12 +267,12 @@ proctype ManageMinStorage() {
     :: true ->
         i = 0;
         do
-        :: (i < DB_SIZE) ->
+        :: (i < DATABASE_SIZE) ->
             if
             :: (items[i].how_many < items[i].how_many_min) ->
                 item_id = items[i].id;
                 needed_qty = items[i].how_many_min - items[i].how_many;
-                producer_id = items[i].producer_id % N_PRODUCERS;
+                producer_id = items[i].producer_id % PRODUCER_NUMBER;
 
                 // Richiede produzione per ripristinare la quantità minima
                 PI[producer_id]!1, item_id, needed_qty;
@@ -319,7 +331,7 @@ proctype SendOrders() {
     :: true ->
         i = 0;
         do
-        :: (i < DB_SIZE) ->
+        :: (i < DATABASE_SIZE) ->
             if
             :: (orders[i].date_ready > 0 && orders[i].date_shipped == 0) ->
                 order_id = orders[i].id;
@@ -327,7 +339,7 @@ proctype SendOrders() {
                 quantity = orders[i].how_many;
 
                 // Seleziona il corriere con meno carico
-                shipper_id = i % N_SHIPPERS;
+                shipper_id = i % SHIPPER_NUMBER;
 
                 // Invia la richiesta di spedizione
                 SI[shipper_id]!order_id, item_id, quantity;
@@ -383,11 +395,11 @@ proctype IntMonitor() {
     :: true ->
         i = 0;
         do
-        :: (i < DB_SIZE) ->
+        :: (i < DATABASE_SIZE) ->
             if
-            :: (orders[i].date_arrived - orders[i].date_placed > THETA) ->
+            :: (orders[i].date_arrived - orders[i].date_placed > MAX_ELAPSED_TIME) ->
                 anomalies[i] = 1; // Segnala un'anomalia per ordine in ritardo
-            :: (time - orders[i].date_placed > THETA) ->
+            :: (time - orders[i].date_placed > MAX_ELAPSED_TIME) ->
                 anomalies[i] = 1; // Segnala un'anomalia per ordine non ancora arrivato
             fi;
             i++;
@@ -401,12 +413,12 @@ proctype IntMonitor() {
 
 init {
     atomic {
-        // Avvia il processo per la generazione dell'ambiente (clienti, produttori, spedizionieri)
+        // Avvio il processo per la generazione dell'ambiente (clienti, produttori, spedizionieri)
         run EnvGen(0); // Customers
         run EnvGen(1); // Producers
         run EnvGen(2); // Shippers
 
-        // Avvia i processi di gestione del sistema
+        // Avvio i processi di gestione del sistema
         run ManageOrders();
         run ManageMinStorage();
         run SendOrders();
@@ -415,24 +427,24 @@ init {
         run CollectFromShip();
         run IntMonitor();
 
-        // Crea le istanze dei clienti
+        // Creo le istanze dei clienti
         int i = 0;
         do
-        :: (i < N_CUSTOMERS) -> run Customer(i); i++;
+        :: (i < CUSTOMER_NUMBER) -> run Customer(i); i++;
         :: else -> break;
         od;
 
-        // Crea le istanze dei produttori
+        // Creo le istanze dei produttori
         i = 0;
         do
-        :: (i < N_PRODUCERS) -> run Producer(i); i++;
+        :: (i < PRODUCER_NUMBER) -> run Producer(i); i++;
         :: else -> break;
         od;
 
-        // Crea le istanze dei corrieri
+        // Creo le istanze dei corrieri
         i = 0;
         do
-        :: (i < N_SHIPPERS) -> run Shipper(i); i++;
+        :: (i < SHIPPER_NUMBER) -> run Shipper(i); i++;
         :: else -> break;
         od;
     }
