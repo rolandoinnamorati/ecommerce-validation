@@ -1,2 +1,0 @@
-// Nessun deadlock
-ltl no_deadlock { []<> SIs }  

@@ -1,0 +1,1 @@
+ltl order_delivered { [] ( (orders[0].date_shipped > 0) -> <> (orders[0].date_arrived > 0) ) }
