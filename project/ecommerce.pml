@@ -1,6 +1,5 @@
 #define DATABASE_SIZE 3
 #define CHANNEL_SIZE 3
-#define MAX_ELAPSED_TIME 5
 #define POSSIBLE_ANOMALIES 5
 
 #define CUSTOMER_NUMBER 2
@@ -30,11 +29,11 @@ typedef Order {
 	int customer_id;
 	int item_id;
 	int how_many;
-	int date_placed;
-	int date_processed;
-	int date_ready;
-	int date_shipped;
-	int date_arrived;
+	bit date_placed;
+	bit date_processed;
+	bit date_ready;
+	bit date_shipped;
+	bit date_arrived;
 }
 
 Actor actors[DATABASE_SIZE];
@@ -42,7 +41,6 @@ Item items[DATABASE_SIZE];
 Order orders[DATABASE_SIZE];
 
 int anomalies[POSSIBLE_ANOMALIES];
-int time = 0;
 
 //Channel in common where clients ask. Params: type, customer id, item id, quantity
 chan CO = [CHANNEL_SIZE] of { bit, int, int, int };
@@ -62,88 +60,38 @@ chan SO = [CHANNEL_SIZE] of { bit, int, int };
 //Dedicated channel where shippers receive the response. Params: order id, item id, quantity
 chan SI[SHIPPER_NUMBER] = [CHANNEL_SIZE] of { int, int, int };
 
-
-//Utility per generare numeri casuali
-chan randomChan = [0] of { bit };
-bit fd = 0;
-bit fa = 0;
-proctype RandomGenerator() {
-    do
-    :: randomChan!0
-    :: randomChan!1
-    od;
-}
-
-// Algorithm 1: Environment Setup
-proctype EnvGen(byte p) {
-    int n = 0;
-    bit stop;
-    int new_pid;
-    bit rand_val;
-
-    do
-    :: (p == 0 && n > 0) -> // Caso: un cliente termina
-        n--;
-    :: (n >= 1 && n < DATABASE_SIZE) ->
-        randomChan?rand_val;
-        if
-        :: (rand_val > fd) -> // Rimozione casuale
-            stop = 0;
-            do
-            :: (stop == 0 && n > 0) ->
-                new_pid = n - 1;
-                actors[new_pid].id = -1; // Segna come terminato
-                n--;
-                stop = 1;
-            :: else -> break;
-            od;
-        fi;
-    :: (n < 1 || (n < DATABASE_SIZE)) ->
-        randomChan?rand_val;
-        if
-        :: (rand_val > fa) -> // Creazione nuovo processo
-            stop = 0;
-            do
-            :: (stop == 0 && n < DATABASE_SIZE) ->
-                new_pid = n;
-                actors[new_pid].id = new_pid;
-                actors[new_pid].type = p;
-                n++;
-                stop = 1;
-            :: else -> break;
-            od;
-        fi;
-    :: else -> skip;
-    od;
-}
-
 // Algorithm 2: Environment: single customer issuing requests
 proctype Customer(int pid_cust) {
  	int elem_id, descr, how_many;
 	int selected, quantity;
 
+    //Faccio la richiesta iniziale per ottere la lista degli elementi (i prodotti)
 	CO!0, pid_cust, 0, 0;
+
 	do
-    	:: CI[pid_cust]?0, elem_id, descr, how_many
-        		do
-        		:: (how_many > 0) ->
-            			if
-            			:: skip -> selected = 0;
-            			:: skip -> selected = 1;
-            			fi
-            			if
-            			:: (selected == 1) ->
-             				do
-				:: quantity < how_many ->
-					quantity++;
-				:: break;
-				od
-                				CO!1, pid_cust, elem_id, quantity;
-				CI[pid_cust]?1, elem_id, descr, how_many;
-            			:: else -> skip;
-            			fi
-		:: else -> break;
-        		od
+	    //Ricevo la risposta
+    	:: CI[pid_cust]?0, elem_id, descr, how_many ->
+    	        //Decisione non deterministica se ordinare o no
+                if
+                    :: selected = 0;  // Non ordina
+                    :: selected = 1;  // Ordina
+                fi;
+
+        		if
+                    :: (selected == 1 && how_many > 0) ->
+                        quantity = 1;
+                        do
+                            :: (quantity < how_many) -> quantity++
+                            :: break
+                        od;
+
+                        //Invia ordine
+                        CO!1, pid_cust, elem_id, quantity;
+
+                        //Attendo conferma ordine
+                        CI[pid_cust]?1, elem_id, descr, how_many;
+                    :: else -> skip  //Non ordina
+                fi
 	od
 }
 
@@ -175,11 +123,10 @@ proctype CollectFromCustomer() {
         :: (type == 1) -> {
             if
             :: (order_id < DATABASE_SIZE) -> {
-                time++;
                 orders[order_id].customer_id = customer_id;
                 orders[order_id].item_id = item_id;
                 orders[order_id].how_many = quantity;
-                orders[order_id].date_placed = time;
+                orders[order_id].date_placed = 1;
                 CI[customer_id]!1, order_id, 0, 0;
                 order_id++;
             }
@@ -208,13 +155,13 @@ proctype ManageOrders() {
 
                 // Segna l'ordine come processato
                 if
-                :: (orders[i].date_processed == 0) -> orders[i].date_processed = time;
+                :: (orders[i].date_processed == 0) -> orders[i].date_processed = 1;
                 fi;
 
                 if
                 :: (stock >= how_many) ->
                     // Disponibilità sufficiente: l'ordine è pronto
-                    orders[i].date_ready = time;
+                    orders[i].date_ready = 1;
                     items[item_id].how_many = stock - how_many;
                 :: else ->
                     // Disponibilità insufficiente: richiede produzione
@@ -227,34 +174,6 @@ proctype ManageOrders() {
             fi;
             i++;
         :: else -> skip;
-        od;
-
-        time++;
-    od;
-}
-
-
-// Algorithm 5: System: Producer API auxiliary function
-proctype SendProd() {
-    int i, item_id, producer_id, qty_to_produce;
-
-    do
-    :: true ->
-        i = 0;
-        do
-        :: (i < DATABASE_SIZE) ->
-            if
-            :: (!items[i].producing && items[i].how_many < items[i].how_many_min) ->
-                item_id = items[i].id;
-                qty_to_produce = items[i].how_many_min - items[i].how_many;
-                producer_id = items[i].producer_id % PRODUCER_NUMBER;
-
-                // Segna l'oggetto come in produzione e invia la richiesta al produttore
-                items[i].producing = 1;
-                PI[producer_id]!1, item_id, qty_to_produce;
-            fi;
-            i++;
-        :: else -> break;
         od;
     od;
 }
@@ -345,13 +264,11 @@ proctype SendOrders() {
                 SI[shipper_id]!order_id, item_id, quantity;
 
                 // Segna l'ordine come spedito
-                orders[i].date_shipped = time;
+                orders[i].date_shipped = 1;
             fi;
             i++;
         :: else -> break;
         od;
-
-        time++;
     od;
 }
 
@@ -362,7 +279,7 @@ proctype CollectFromShip() {
     do
     :: SO?shipper_id, order_id, temp_value ->
         // Segna l'ordine come consegnato aggiornando la data di arrivo
-        orders[order_id].date_arrived = time;
+        orders[order_id].date_arrived = 1;
     od;
 }
 
@@ -387,37 +304,9 @@ proctype Shipper(int pid_ship) {
     od;
 }
 
-// Algorithm 12: System: IntMonitor
-proctype IntMonitor() {
-    int i;
-
-    do
-    :: true ->
-        i = 0;
-        do
-        :: (i < DATABASE_SIZE) ->
-            if
-            :: (orders[i].date_arrived - orders[i].date_placed > MAX_ELAPSED_TIME) ->
-                anomalies[i] = 1; // Segnala un'anomalia per ordine in ritardo
-            :: (time - orders[i].date_placed > MAX_ELAPSED_TIME) ->
-                anomalies[i] = 1; // Segnala un'anomalia per ordine non ancora arrivato
-            fi;
-            i++;
-        :: else -> break;
-        od;
-
-        time++;
-    od;
-}
-
 
 init {
     atomic {
-        // Avvio il processo per la generazione dell'ambiente (clienti, produttori, spedizionieri)
-        run EnvGen(0); // Customers
-        run EnvGen(1); // Producers
-        run EnvGen(2); // Shippers
-
         // Avvio i processi di gestione del sistema
         run ManageOrders();
         run ManageMinStorage();
