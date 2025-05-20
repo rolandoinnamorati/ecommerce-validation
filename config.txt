@@ -1,0 +1,10 @@
+stv
+postgres
+admin
+localhost
+5432
+stv
+postgres
+admin
+localhost
+5432

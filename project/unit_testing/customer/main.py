@@ -14,11 +14,13 @@ def main():
     common_lib.init_rand(args.rand_seed)
     rc = redis.Redis(host=args.redishost, port=args.redisport, decode_responses=True)
     fun_name = "customer_env_" + str(args.index_cust)
-    # common_lib.init_time(rc, False, fun_name)
+    common_lib.init_time(rc, False, fun_name)
+    print("[main] Avviato con argomenti corretti")
     common_lib.redis_command(rc, "LPUSH " + args.queue_co + " init " + str(args.index_cust))
     resp = common_lib.redis_command(rc, "BRPOP " + args.queue_ci_base + str(args.index_cust) + " 0")[1]
     res = resp.split()
-    # print("DBG" + str(res))
+
+    print("DBG" + str(res))
     index_cust_db = res[0]
     I = {}
     for i in range(1, len(res), 2):
