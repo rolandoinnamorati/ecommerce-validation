@@ -9,11 +9,7 @@ import datetime
 QUEUE_PREFIX = "work:queue:"
 QUEUE_INIT_BARR_SEND = "work:queue:INIT_BARR_SEND"
 CONFIG_FILE_PATH = "../config.txt"
-SIMULATION_MODE = True
-
-fun_name_glob = ""
-advance_elapsed_glob = 0
-also_barrier_glob = False
+SIMULATION_MODE = False
 
 def init_time(rc, also_register, fun_name):
     global advance_elapsed_glob
@@ -94,6 +90,7 @@ def ba_redis_command(rc, also_wrap, cmd, cmd_alt=None):
     elif cmd_ar[0] == "RPOP":
         ret = rc.rpop(cmd_ar[1])
     elif cmd_ar[0] == "BRPOP":
+        print("BRPOP %s %d" %(cmd_ar[1], 0))
         ret = rc.brpop(cmd_ar[1], 0)
     if also_wrap and (cmd_ar[0] != "RPOP" or after_but_empty_glob or ret != None):
         if cmd_ar[0] == "RPOP" and ret == None:
@@ -214,7 +211,7 @@ def lump_time(rc, cause="", fixed_time=0, sleep=False):
     else:
         print("Sleeping %d" %to_be_slept)
         sys.stdout.flush()
-        time.sleep(to_be_slept)
+        time.sleep(to_be_slept / 1000)
 
 def custom_random(spec):
     if "finite_uniform" in spec:

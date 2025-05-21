@@ -14,10 +14,12 @@ def main():
     rc = redis.Redis(host=args.redishost, port=args.redisport, decode_responses=True)
     fun_name = "producer_env_" + str(args.index_prod)
     common_lib.init_time(rc, False, fun_name)
+    print("[main] Avviato con argomenti corretti")
     common_lib.redis_command(rc, "LPUSH " + args.queue_po + " init " + str(args.index_prod))
     resp = common_lib.redis_command(rc, "BRPOP " + args.queue_pi_base + str(args.index_prod) + " 0")[1]
     resp_ar = resp.split()
-    # print("DBG" + str(resp_ar))
+
+    print("DBG" + str(resp_ar))
     I = random.sample(resp_ar, random.randint(1, len(resp_ar) - 1))
     tbs = str(I).replace("[", "").replace("]", "").replace(",", "").replace("'", "")
     common_lib.redis_command(rc, "LPUSH " + args.queue_po + " prod " + str(args.index_prod) + " " + tbs)
@@ -42,7 +44,7 @@ def main():
                 common_lib.sleep_wrap(rc, cause="prod_time")
                 common_lib.redis_command(rc, "LPUSH " + args.queue_po + " " + i + " " + str(m))
         common_lib.sleep_wrap(rc, cause="main_sleep")
-        
+
 def parse_args():
     QUEUE_PO_DEF = "work:queue:PO"
     QUEUE_PI_BASE_DEF = "work:queue:PI"
